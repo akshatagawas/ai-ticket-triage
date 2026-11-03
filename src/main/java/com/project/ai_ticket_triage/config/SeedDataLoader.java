@@ -56,7 +56,7 @@ public class SeedDataLoader implements ApplicationRunner {
                 // The embedded text is subject + body, and category, priority and resolution ride along as metadata
                 docs.add(Document.builder()
                         .text(p[2] + "\n" + p[3])
-                        .metadata(Map.of("category", p[0], "priority", p[1], "resolution", p[4]))
+                        .metadata(Map.of("source", "seed", "category", p[0], "priority", p[1], "resolution", p[4]))
                         .build());
             }
         }

@@ -11,50 +11,71 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * Orchestrates classification: check the Redis cache first, and on a miss
- * retrieve similar past tickets (RAG) and call Claude, then cache the answer.
+ * Orchestrates classification through three tiers:
+ *   1. Redis exact-match cache        (identical text, about 1 ms)
+ *   2. pgvector semantic cache        (same meaning, different wording)
+ *   3. RAG retrieval + Claude         (slow path, result is cached in both tiers)
  *
- * Cache and retrieval are both best-effort. If Redis or pgvector fails, the
- * ticket is still classified, only slower or with less context.
- * Hit and miss counts are exposed as Micrometer metrics for Prometheus and Grafana.
+ * Every cache and retrieval step is best-effort: if Redis or pgvector fails,
+ * the ticket is still classified, just more slowly.
+ * Outcomes are exposed as triage_cache_requests_total{result=...} for Prometheus.
  */
 @Service
 public class ClassificationService {
 
     private static final Logger log = LoggerFactory.getLogger(ClassificationService.class);
 
-    private final ClassificationCache cache;
+    private final ClassificationCache exactCache;
+    private final SemanticCache semanticCache;
     private final KnowledgeBaseService knowledgeBase;
     private final ClaudeClient claude;
-    private final Counter cacheHits;
-    private final Counter cacheMisses;
+    private final Counter exactHits;
+    private final Counter semanticHits;
+    private final Counter misses;
 
-    public ClassificationService(ClassificationCache cache, KnowledgeBaseService knowledgeBase,
-                                 ClaudeClient claude, MeterRegistry registry) {
-        this.cache = cache;
+    public ClassificationService(ClassificationCache exactCache, SemanticCache semanticCache,
+                                 KnowledgeBaseService knowledgeBase, ClaudeClient claude,
+                                 MeterRegistry registry) {
+        this.exactCache = exactCache;
+        this.semanticCache = semanticCache;
         this.knowledgeBase = knowledgeBase;
         this.claude = claude;
-        // Appears in Prometheus as triage_cache_requests_total{result="hit"|"miss"}
-        this.cacheHits = Counter.builder("triage.cache.requests").tag("result", "hit").register(registry);
-        this.cacheMisses = Counter.builder("triage.cache.requests").tag("result", "miss").register(registry);
+        this.exactHits = Counter.builder("triage.cache.requests").tag("result", "hit_exact").register(registry);
+        this.semanticHits = Counter.builder("triage.cache.requests").tag("result", "hit_semantic").register(registry);
+        this.misses = Counter.builder("triage.cache.requests").tag("result", "miss").register(registry);
     }
 
     public ClassificationResult classify(String subject, String body) {
-        // 1. Cache lookup. A Redis failure is treated as a miss
+        // Tier 1: exact match in Redis
         try {
-            Optional<ClassificationResult> cached = cache.get(subject, body);
-            if (cached.isPresent()) {
-                cacheHits.increment();
-                log.info("Cache HIT for [{}]", subject);
-                return cached.get();
+            Optional<ClassificationResult> exact = exactCache.get(subject, body);
+            if (exact.isPresent()) {
+                exactHits.increment();
+                log.info("Exact cache HIT for [{}]", subject);
+                return exact.get();
             }
         } catch (Exception e) {
-            log.warn("Cache read failed, continuing without cache", e);
+            log.warn("Exact cache read failed, continuing", e);
         }
-        cacheMisses.increment();
+
+        // Tier 2: semantic match in pgvector
+        try {
+            Optional<ClassificationResult> semantic = semanticCache.get(subject, body);
+            if (semantic.isPresent()) {
+                semanticHits.increment();
+                log.info("Semantic cache HIT for [{}]", subject);
+                // Promote to Redis so the identical text is served instantly next time
+                putExactQuietly(subject, body, semantic.get());
+                return semantic.get();
+            }
+        } catch (Exception e) {
+            log.warn("Semantic cache read failed, continuing", e);
+        }
+
+        misses.increment();
         log.info("Cache MISS for [{}]", subject);
 
-        // 2. Retrieve similar past tickets (best-effort)
+        // Tier 3: RAG retrieval (best-effort) and Claude
         List<SimilarCase> similar = List.of();
         try {
             similar = knowledgeBase.findSimilar(subject, body);
@@ -64,15 +85,24 @@ public class ClassificationService {
             log.warn("Similarity search failed, continuing without it", e);
         }
 
-        // 3. Ask Claude. Failures here propagate so the consumer can mark the ticket FAILED
+        // Failures here propagate so the consumer can mark the ticket FAILED
         ClassificationResult result = claude.classify(subject, body, similar);
 
-        // 4. Cache the answer (best-effort)
+        // Store in both tiers (best-effort)
+        putExactQuietly(subject, body, result);
         try {
-            cache.put(subject, body, result);
+            semanticCache.put(subject, body, result);
         } catch (Exception e) {
-            log.warn("Cache write failed", e);
+            log.warn("Semantic cache write failed", e);
         }
         return result;
+    }
+
+    private void putExactQuietly(String subject, String body, ClassificationResult result) {
+        try {
+            exactCache.put(subject, body, result);
+        } catch (Exception e) {
+            log.warn("Exact cache write failed", e);
+        }
     }
 }
