@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Ticket Triage - Live Queue</title>
+    <style>
+        :root {
+            --bg: #f6f7f9; --card: #ffffff; --text: #1c2230; --muted: #667085; --border: #e3e6ec;
+            --accent: #3b5bdb; --urgent: #d92d20; --high: #f79009; --medium: #3b82f6; --low: #98a2b3;
+            --ok: #12b76a; --fail: #d92d20;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root { --bg: #12151c; --card: #1b2030; --text: #e7eaf1; --muted: #98a2b3; --border: #2b3246; --accent: #7c93ff; }
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: var(--bg); color: var(--text);
+            font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        a { color: var(--accent); }
+        .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+        header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+        h1 { font-size: 22px; margin: 0; }
+        .head-right { display: flex; gap: 16px; align-items: baseline; font-size: 14px; }
+        #status { font-size: 13px; }
+        #status.live { color: var(--ok); }
+        #status.down { color: var(--fail); }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin: 20px 0; }
+        .stat, .panel, .ticket { background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
+        .stat { padding: 12px 14px; }
+        .stat b { display: block; font-size: 24px; }
+        .stat span { color: var(--muted); font-size: 13px; }
+        .panel { padding: 14px; margin-bottom: 16px; }
+        .panel h2 { font-size: 15px; margin: 0 0 10px; }
+        input, textarea, select, button { font: inherit; color: var(--text); background: var(--bg);
+            border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+        input, textarea { width: 100%; margin-bottom: 8px; }
+        textarea { min-height: 64px; resize: vertical; }
+        button { cursor: pointer; }
+        button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        button:disabled { opacity: .5; cursor: default; }
+        .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+        .ticket { padding: 12px 14px; margin-bottom: 10px; }
+        .ticket.resolved { opacity: .65; }
+        .meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); }
+        .ticket h3 { font-size: 16px; margin: 8px 0 4px; }
+        .ticket p { margin: 0; color: var(--muted); white-space: pre-wrap; }
+        .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; background: var(--low); }
+        .p-URGENT { background: var(--urgent); } .p-HIGH { background: var(--high); }
+        .p-MEDIUM { background: var(--medium); } .p-LOW { background: var(--low); }
+        .cat { background: transparent; color: var(--text); border: 1px solid var(--border); }
+        .s-ROUTED { background: var(--ok); } .s-FAILED { background: var(--fail); }
+        .s-NEW, .s-RECEIVED { background: var(--accent); }
+        .s-RESOLVED { background: var(--muted); }
+        .actions { margin-top: 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .note { font-size: 12px; color: var(--muted); }
+        details { margin-top: 8px; }
+        summary { cursor: pointer; font-size: 13px; color: var(--accent); }
+        details p { margin-top: 6px; color: var(--text); }
+        .empty { text-align: center; color: var(--muted); padding: 24px; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <h1>AI Ticket Triage - Live Queue</h1>
+        <div class="head-right">
+            <a href="/search.html">Search by ticket #</a>
+            <span id="status">Connecting...</span>
+        </div>
+    </header>
+
+    <div class="stats">
+        <div class="stat"><b id="s-total">0</b><span>Total shown</span></div>
+        <div class="stat"><b id="s-processing">0</b><span>Processing</span></div>
+        <div class="stat"><b id="s-routed">0</b><span>Routed</span></div>
+        <div class="stat"><b id="s-failed">0</b><span>Failed</span></div>
+        <div class="stat"><b id="s-resolved">0</b><span>Resolved</span></div>
+    </div>
+
+    <div class="panel">
+        <h2>Submit a ticket</h2>
+        <form id="form">
+            <input id="subject" placeholder="Subject" maxlength="200" required>
+            <textarea id="body" placeholder="Describe the problem" maxlength="3000" required></textarea>
+            <div class="row">
+                <button class="primary" id="send" type="submit">Send ticket</button>
+                <button type="button" id="sample">Fill sample</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="filters">
+        <select id="f-status">
+            <option value="">All statuses</option>
+            <option value="PROCESSING">Processing</option>
+            <option value="ROUTED">Routed</option>
+            <option value="FAILED">Failed</option>
+            <option value="RESOLVED">Resolved</option>
+        </select>
+        <select id="f-category">
+            <option value="">All categories</option>
+            <option>BILLING</option><option>TECHNICAL</option><option>ACCOUNT</option>
+            <option>SHIPPING</option><option>GENERAL</option>
+        </select>
+        <select id="f-sort">
+            <option value="priority">Sort: priority</option>
+            <option value="newest">Sort: newest</option>
+        </select>
+    </div>
+
+    <div id="list"></div>
+</div>
+
+<script>
+    const API = '/tickets';
+    const POLL_MS = 2000;
+    // Keep in sync with triage.resolved-visible-minutes in application.properties. The server enforces it, and this only drives the countdown note
+    const RESOLVED_VISIBLE_MIN = 5;
+    const PRIORITY_RANK = { URGENT: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+    const SAMPLES = [
+        ['Charged twice', 'I was billed twice for my October subscription and need one charge reversed.'],
+        ['Production API returning 500', 'Since 9am all our API calls fail with 500 errors and customers cannot check out.'],
+        ['Cannot log in', 'I reset my password twice but I still get an invalid credentials error.'],
+        ['Package never arrived', 'My order was marked delivered 5 days ago but nothing is at my door.'],
+        ['Student discount?', 'Just wondering whether you offer discounts for students.'],
+        ['Suspicious account activity', 'I got an email saying my password changed, but I did not do it.']
+    ];
+
+    const $ = id => document.getElementById(id);
+    let tickets = [];
+    const openReplies = new Set();   // ids whose "Suggested reply" is expanded, so refreshes don't collapse them
+
+    const isProcessing = t => t.status === 'NEW' || t.status === 'RECEIVED';
+    const canResolve = t => t.status === 'ROUTED' || t.status === 'FAILED';
+
+    // Dates may arrive as an ISO string or as epoch seconds, so handle both. Returns milliseconds or null
+    function toMs(v) {
+        if (v === null || v === undefined) return null;
+        const d = new Date(typeof v === 'number' ? (v < 1e12 ? v * 1000 : v) : v);
+        return isNaN(d) ? null : d.getTime();
+    }
+
+    function timeLabel(v) {
+        const ms = toMs(v);
+        return ms === null ? '' : new Date(ms).toLocaleTimeString();
+    }
+
+    // Builds an element with plain text only. textContent means ticket text can never run as HTML
+    function el(tag, cls, text) {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text !== undefined && text !== null) e.textContent = text;
+        return e;
+    }
+
+    async function refresh() {
+        try {
+            const res = await fetch(API);
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            tickets = await res.json();
+            $('status').textContent = 'Live - updated ' + new Date().toLocaleTimeString();
+            $('status').className = 'live';
+            render();
+        } catch (e) {
+            $('status').textContent = 'Cannot reach API (' + e.message + ')';
+            $('status').className = 'down';
+        }
+    }
+
+    function render() {
+        // Stats come from the full list; filters only affect the cards below
+        $('s-total').textContent = tickets.length;
+        $('s-processing').textContent = tickets.filter(isProcessing).length;
+        $('s-routed').textContent = tickets.filter(t => t.status === 'ROUTED').length;
+        $('s-failed').textContent = tickets.filter(t => t.status === 'FAILED').length;
+        $('s-resolved').textContent = tickets.filter(t => t.status === 'RESOLVED').length;
+
+        const fStatus = $('f-status').value, fCat = $('f-category').value, sort = $('f-sort').value;
+        let shown = tickets.filter(t =>
+            (!fStatus || (fStatus === 'PROCESSING' ? isProcessing(t) : t.status === fStatus)) &&
+            (!fCat || t.category === fCat));
+
+        // Resolved tickets sink to the bottom when sorting by priority
+        const rank = t => t.status === 'RESOLVED' ? 9 : (PRIORITY_RANK[t.priority] ?? 4);
+        shown.sort((a, b) => {
+            if (sort === 'priority' && rank(a) !== rank(b)) return rank(a) - rank(b);
+            return b.id - a.id;
+        });
+
+        const list = $('list');
+        list.replaceChildren();
+        if (shown.length === 0) {
+            list.appendChild(el('div', 'empty', 'No tickets match. Submit one above.'));
+            return;
+        }
+        shown.forEach(t => list.appendChild(card(t)));
+    }
+
+    function card(t) {
+        const c = el('div', 'ticket' + (t.status === 'RESOLVED' ? ' resolved' : ''));
+        const meta = el('div', 'meta');
+        const idLink = el('a', '', '#' + t.id);        // opens this ticket on the search page
+        idLink.href = '/search.html?id=' + t.id;
+        meta.appendChild(idLink);
+        if (t.priority) meta.appendChild(el('span', 'badge p-' + t.priority, t.priority));
+        if (t.category) meta.appendChild(el('span', 'badge cat', t.category));
+        meta.appendChild(el('span', 'badge s-' + t.status, isProcessing(t) ? 'CLASSIFYING' : t.status));
+        meta.appendChild(el('span', '', timeLabel(t.createdAt)));
+        c.appendChild(meta);
+        c.appendChild(el('h3', '', t.subject));
+        c.appendChild(el('p', '', t.body));
+
+        if (t.suggestedReply) {
+            const d = el('details');
+            d.dataset.id = t.id;
+            d.open = openReplies.has(t.id);
+            d.appendChild(el('summary', '', 'Suggested reply'));
+            d.appendChild(el('p', '', t.suggestedReply));
+            c.appendChild(d);
+        }
+
+        const actions = el('div', 'actions');
+        if (canResolve(t)) {
+            const btn = el('button', '', 'Mark resolved');
+            btn.addEventListener('click', () => resolveTicket(t.id, btn));
+            actions.appendChild(btn);
+        }
+        if (t.status === 'RESOLVED') {
+            // Countdown until the server stops returning this ticket (it stays in the database)
+            const at = toMs(t.resolvedAt);
+            let note = 'Resolved';
+            if (at !== null) {
+                const minsLeft = Math.max(0, Math.ceil((at + RESOLVED_VISIBLE_MIN * 60000 - Date.now()) / 60000));
+                note = 'Resolved at ' + new Date(at).toLocaleTimeString() +
+                    ' - leaves this view in ' + minsLeft + ' min (still searchable)';
+            }
+            actions.appendChild(el('span', 'note', note));
+        }
+        if (actions.children.length) c.appendChild(actions);
+        return c;
+    }
+
+    async function resolveTicket(id, btn) {
+        btn.disabled = true;
+        try {
+            const res = await fetch(API + '/' + id + '/resolve', { method: 'POST' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            await refresh();   // show the new status immediately
+        } catch (e) {
+            alert('Could not resolve ticket: ' + e.message);
+            btn.disabled = false;
+        }
+    }
+
+    // Remember which replies the user expanded (toggle does not bubble, so listen in the capture phase)
+    $('list').addEventListener('toggle', e => {
+        const id = Number(e.target.dataset && e.target.dataset.id);
+        if (!id) return;
+        if (e.target.open) openReplies.add(id); else openReplies.delete(id);
+    }, true);
+
+    ['f-status', 'f-category', 'f-sort'].forEach(id => $(id).addEventListener('change', render));
+
+    $('sample').addEventListener('click', () => {
+        const s = SAMPLES[Math.floor(Math.random() * SAMPLES.length)];
+        $('subject').value = s[0];
+        $('body').value = s[1];
+    });
+
+    $('form').addEventListener('submit', async e => {
+        e.preventDefault();
+        const subject = $('subject').value.trim(), body = $('body').value.trim();
+        if (!subject || !body) return;
+        $('send').disabled = true;
+        try {
+            const res = await fetch(API, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ subject, body })
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            $('subject').value = '';
+            $('body').value = '';
+            await refresh();   // show the new ticket immediately instead of waiting for the next poll
+        } catch (err) {
+            alert('Could not submit ticket: ' + err.message);
+        } finally {
+            $('send').disabled = false;
+        }
+    });
+
+    refresh();
+    setInterval(refresh, POLL_MS);
+</script>
+</body>
+</html>

@@ -32,6 +32,11 @@ public class Ticket {
     @Column(length = 4000)
     private String suggestedReply;
 
+    // Set when an agent marks the ticket resolved. The row is never deleted, and only the live queue hides it
+    private Instant resolvedAt;
+
+    public Instant getResolvedAt() { return resolvedAt; }
+    public void setResolvedAt(Instant resolvedAt) { this.resolvedAt = resolvedAt; }
     public Long getId() { return id; }
     public String getSubject() { return subject; }
     public void setSubject(String subject) { this.subject = subject; }
