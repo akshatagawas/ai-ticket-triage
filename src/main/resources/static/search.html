@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Ticket Triage - Search</title>
+    <style>
+        :root {
+            --bg: #f6f7f9; --card: #ffffff; --text: #1c2230; --muted: #667085; --border: #e3e6ec;
+            --accent: #3b5bdb; --urgent: #d92d20; --high: #f79009; --medium: #3b82f6; --low: #98a2b3;
+            --ok: #12b76a; --fail: #d92d20;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root { --bg: #12151c; --card: #1b2030; --text: #e7eaf1; --muted: #98a2b3; --border: #2b3246; --accent: #7c93ff; }
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: var(--bg); color: var(--text);
+            font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        a { color: var(--accent); }
+        .wrap { max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }
+        header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+        h1 { font-size: 22px; margin: 0; }
+        .panel, .ticket { background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
+        .panel { padding: 14px; margin-bottom: 16px; }
+        input, button { font: inherit; color: var(--text); background: var(--bg);
+            border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+        input { flex: 1; min-width: 0; }
+        button { cursor: pointer; }
+        button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        button:disabled { opacity: .5; cursor: default; }
+        .row { display: flex; gap: 8px; }
+        .ticket { padding: 16px; }
+        .meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); }
+        .ticket h2 { font-size: 18px; margin: 10px 0 6px; }
+        .ticket p { margin: 0 0 4px; white-space: pre-wrap; }
+        .label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 4px; }
+        .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; background: var(--low); }
+        .p-URGENT { background: var(--urgent); } .p-HIGH { background: var(--high); }
+        .p-MEDIUM { background: var(--medium); } .p-LOW { background: var(--low); }
+        .cat { background: transparent; color: var(--text); border: 1px solid var(--border); }
+        .s-ROUTED { background: var(--ok); } .s-FAILED { background: var(--fail); }
+        .s-NEW, .s-RECEIVED { background: var(--accent); }
+        .s-RESOLVED { background: var(--muted); }
+        .times { font-size: 13px; color: var(--muted); margin-top: 12px; }
+        .actions { margin-top: 14px; }
+        .empty { text-align: center; color: var(--muted); padding: 24px; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <h1>Search ticket</h1>
+        <a href="/">Back to live queue</a>
+    </header>
+
+    <form class="panel" id="form">
+        <div class="row">
+            <input id="id" type="number" min="1" step="1" placeholder="Ticket number, e.g. 42" required autofocus>
+            <button class="primary" type="submit">Search</button>
+        </div>
+    </form>
+
+    <div id="result"></div>
+</div>
+
+<script>
+    const $ = id => document.getElementById(id);
+    let timer = null;   // re-checks a ticket that is still being classified
+
+    // Builds an element with plain text only, so ticket text can never run as HTML
+    function el(tag, cls, text) {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text !== undefined && text !== null) e.textContent = text;
+        return e;
+    }
+
+    // Dates may arrive as an ISO string or epoch seconds
+    function fmt(v) {
+        if (v === null || v === undefined) return null;
+        const d = new Date(typeof v === 'number' ? (v < 1e12 ? v * 1000 : v) : v);
+        return isNaN(d) ? null : d.toLocaleString();
+    }
+
+    const isProcessing = t => t.status === 'NEW' || t.status === 'RECEIVED';
+    const canResolve = t => t.status === 'ROUTED' || t.status === 'FAILED';
+
+    function show(node) {
+        $('result').replaceChildren(node);
+    }
+
+    async function lookup(id) {
+        clearTimeout(timer);
+        if (!/^\d{1,18}$/.test(id)) {
+            show(el('div', 'empty', 'Enter a ticket number (digits only).'));
+            return;
+        }
+        // Keep the URL shareable, e.g. /search.html?id=42
+        history.replaceState(null, '', '?id=' + id);
+        try {
+            const res = await fetch('/tickets/' + id);
+            if (res.status === 404) {
+                show(el('div', 'empty', 'No ticket found with number #' + id + '.'));
+                return;
+            }
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const t = await res.json();
+            show(detail(t));
+            // A ticket still being classified updates itself until it settles
+            if (isProcessing(t)) timer = setTimeout(() => lookup(id), 2000);
+        } catch (e) {
+            show(el('div', 'empty', 'Could not load ticket (' + e.message + ').'));
+        }
+    }
+
+    function detail(t) {
+        const c = el('div', 'ticket');
+        const meta = el('div', 'meta');
+        meta.appendChild(el('span', '', '#' + t.id));
+        if (t.priority) meta.appendChild(el('span', 'badge p-' + t.priority, t.priority));
+        if (t.category) meta.appendChild(el('span', 'badge cat', t.category));
+        meta.appendChild(el('span', 'badge s-' + t.status, isProcessing(t) ? 'CLASSIFYING' : t.status));
+        c.appendChild(meta);
+
+        c.appendChild(el('h2', '', t.subject));
+        c.appendChild(el('p', '', t.body));
+
+        if (t.suggestedReply) {
+            c.appendChild(el('div', 'label', 'Suggested reply'));
+            c.appendChild(el('p', '', t.suggestedReply));
+        }
+
+        const times = [];
+        if (fmt(t.createdAt)) times.push('Created ' + fmt(t.createdAt));
+        if (fmt(t.resolvedAt)) times.push('Resolved ' + fmt(t.resolvedAt));
+        if (times.length) c.appendChild(el('div', 'times', times.join('  |  ')));
+
+        if (canResolve(t)) {
+            const actions = el('div', 'actions');
+            const btn = el('button', '', 'Mark resolved');
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                try {
+                    const res = await fetch('/tickets/' + t.id + '/resolve', { method: 'POST' });
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    lookup(String(t.id));   // reload to show the resolved state
+                } catch (e) {
+                    alert('Could not resolve ticket: ' + e.message);
+                    btn.disabled = false;
+                }
+            });
+            actions.appendChild(btn);
+            c.appendChild(actions);
+        }
+        return c;
+    }
+
+    $('form').addEventListener('submit', e => {
+        e.preventDefault();
+        lookup($('id').value.trim());
+    });
+
+    // Open directly on a ticket when the page is loaded as /search.html?id=42
+    const initial = new URLSearchParams(location.search).get('id');
+    if (initial) {
+        $('id').value = initial;
+        lookup(initial);
+    }
+</script>
+</body>
+</html>

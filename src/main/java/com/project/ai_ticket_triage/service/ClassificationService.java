@@ -4,6 +4,8 @@ import com.project.ai_ticket_triage.dto.ClassificationResult;
 import com.project.ai_ticket_triage.dto.SimilarCase;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -18,7 +20,11 @@ import org.springframework.stereotype.Service;
  *
  * Every cache and retrieval step is best-effort: if Redis or pgvector fails,
  * the ticket is still classified, just more slowly.
- * Outcomes are exposed as triage_cache_requests_total{result=...} for Prometheus.
+ *
+ * Metrics exposed for Prometheus:
+ *   triage_cache_requests_total{result=hit_exact|hit_semantic|miss}
+ *   triage_llm_latency_seconds_*        (Claude call duration)
+ *   triage_retrieval_latency_seconds_*  (RAG vector search duration)
  */
 @Service
 public class ClassificationService {
@@ -32,6 +38,8 @@ public class ClassificationService {
     private final Counter exactHits;
     private final Counter semanticHits;
     private final Counter misses;
+    private final Timer llmLatency;
+    private final Timer retrievalLatency;
 
     public ClassificationService(ClassificationCache exactCache, SemanticCache semanticCache,
                                  KnowledgeBaseService knowledgeBase, ClaudeClient claude,
@@ -43,6 +51,20 @@ public class ClassificationService {
         this.exactHits = Counter.builder("triage.cache.requests").tag("result", "hit_exact").register(registry);
         this.semanticHits = Counter.builder("triage.cache.requests").tag("result", "hit_semantic").register(registry);
         this.misses = Counter.builder("triage.cache.requests").tag("result", "miss").register(registry);
+
+        // Histogram buckets let Prometheus compute p50/p95/p99 with histogram_quantile
+        this.llmLatency = Timer.builder("triage.llm.latency")
+                .description("Duration of the Claude API call")
+                .publishPercentileHistogram()
+                .minimumExpectedValue(Duration.ofMillis(100))
+                .maximumExpectedValue(Duration.ofSeconds(30))
+                .register(registry);
+        this.retrievalLatency = Timer.builder("triage.retrieval.latency")
+                .description("Duration of the pgvector similarity search for RAG")
+                .publishPercentileHistogram()
+                .minimumExpectedValue(Duration.ofMillis(1))
+                .maximumExpectedValue(Duration.ofSeconds(5))
+                .register(registry);
     }
 
     public ClassificationResult classify(String subject, String body) {
@@ -75,18 +97,21 @@ public class ClassificationService {
         misses.increment();
         log.info("Cache MISS for [{}]", subject);
 
-        // Tier 3: RAG retrieval (best-effort) and Claude
+        // Tier 3: RAG retrieval (best-effort, timed)
         List<SimilarCase> similar = List.of();
         try {
-            similar = knowledgeBase.findSimilar(subject, body);
+            similar = retrievalLatency.record(() -> knowledgeBase.findSimilar(subject, body));
             log.info("Matched {} similar cases {}", similar.size(),
                     similar.stream().map(SimilarCase::category).toList());
         } catch (Exception e) {
             log.warn("Similarity search failed, continuing without it", e);
         }
 
-        // Failures here propagate so the consumer can mark the ticket FAILED
-        ClassificationResult result = claude.classify(subject, body, similar);
+        // Lambdas need an effectively final variable, and 'similar' was reassigned above
+        final List<SimilarCase> examples = similar;
+
+        // Timed Claude call. Failures propagate so the consumer can mark the ticket FAILED
+        ClassificationResult result = llmLatency.record(() -> claude.classify(subject, body, examples));
 
         // Store in both tiers (best-effort)
         putExactQuietly(subject, body, result);
