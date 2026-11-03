@@ -279,6 +279,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ subject, body })
             });
+            if (res.status === 429) throw new Error('Too many requests, please wait a minute.');
+            if (res.status === 400) throw new Error('A subject (max 200 characters) and a body (max 3000) are required.');
             if (!res.ok) throw new Error('HTTP ' + res.status);
             $('subject').value = '';
             $('body').value = '';
