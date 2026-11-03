@@ -1,0 +1,23 @@
+# category|priority|subject|body|resolution
+BILLING|MEDIUM|Charged twice for subscription|I see two identical charges on my card this month.|Confirmed a duplicate charge caused by a payment retry and refunded the extra charge, which appears in 5-7 business days.
+BILLING|LOW|Invoice needs company name|Please add our company name and VAT number to last month's invoice.|Regenerated the invoice with the company details and emailed the corrected PDF.
+BILLING|HIGH|Refund not received after cancellation|I cancelled two weeks ago and was promised a refund that has not arrived.|Located the pending refund, escalated it to finance for manual processing, and sent the customer a reference number.
+BILLING|MEDIUM|Unexpected price increase|My plan renewed at a higher price than I was paying before.|Explained the annual price change, applied a one-time loyalty discount, and sent the new pricing details.
+BILLING|LOW|Update credit card|How do I change the card used for my subscription?|Shared the steps under Settings, Billing, Payment methods and confirmed the new card works.
+ACCOUNT|MEDIUM|Cannot log in after password reset|I reset my password but still get an invalid credentials error.|Cleared stale sessions and a lockout flag on the account and asked the customer to log in with a fresh browser session.
+ACCOUNT|URGENT|Account hacked|I got an email that my password changed and I did not do it.|Locked the account, forced a password reset, revoked all active sessions, and enabled two-factor authentication after identity verification.
+ACCOUNT|LOW|Change email address|I want to move my account to a new email address.|Updated the email after verifying ownership through a confirmation link sent to both addresses.
+ACCOUNT|MEDIUM|Two-factor code not arriving|I never receive the SMS verification code when I sign in.|Switched the customer to authenticator-app verification and reset the phone number on file.
+ACCOUNT|LOW|Delete my account|Please delete my account and personal data.|Started the deletion workflow, confirmed identity, and completed data removal within the required window.
+TECHNICAL|URGENT|API returning 500 errors|All our API requests fail with 500 errors and customers cannot check out.|Engineering found a failed deployment, rolled it back, confirmed recovery, and followed up with a post-incident report.
+TECHNICAL|HIGH|App crashes on startup|The mobile app closes immediately after the splash screen.|Identified a bug in the latest release, shipped a hotfix, and advised updating to the newest version.
+TECHNICAL|MEDIUM|Webhook events delayed|Our webhook notifications arrive 30 minutes late.|Found a backlog in the delivery queue, scaled up workers, and replayed the delayed events.
+TECHNICAL|LOW|Dashboard chart shows wrong dates|The date labels on the usage chart look off by one day.|Confirmed a time zone display bug, set the account time zone correctly, and logged the issue for the next release.
+TECHNICAL|MEDIUM|File upload fails|Uploading files larger than 10 MB always fails.|Raised the account's upload limit and explained the size limits per plan.
+SHIPPING|MEDIUM|Package marked delivered but not received|Tracking says delivered five days ago but I have nothing.|Opened an investigation with the carrier and shipped a replacement after the carrier could not confirm delivery.
+SHIPPING|LOW|Change delivery address|I entered the wrong address on my order.|Updated the address before dispatch and confirmed the new delivery estimate.
+SHIPPING|HIGH|Order arrived damaged|The box was crushed and the product is broken.|Apologized, sent a prepaid return label, and shipped a replacement after receiving photos of the damage.
+SHIPPING|LOW|Where is my order|My order has not moved on the tracking page for three days.|Contacted the carrier, confirmed a regional delay, and shared the updated delivery date.
+GENERAL|LOW|Student discount|Do you offer discounts for students?|Shared the student discount program and the verification steps to claim it.
+GENERAL|LOW|Business hours|When is customer support available?|Shared support hours and the fastest channels for urgent issues.
+GENERAL|LOW|Feature request|It would be great to have a dark mode.|Thanked the customer, logged the request with the product team, and explained how to follow the roadmap.

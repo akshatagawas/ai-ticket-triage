@@ -4,13 +4,14 @@ import java.util.List;
 import java.util.Map;
 
 import com.project.ai_ticket_triage.dto.ClassificationResult;
+import com.project.ai_ticket_triage.dto.SimilarCase;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 /**
- * Thin client for the Anthropic Messages API.
+ * Thin client for the Anthropic Messages API (the generation half of RAG).
  *
  * To get reliable JSON we define a "tool" with a JSON schema and force Claude
  * to call it (tool_choice). The tool arguments come back as a ready-made JSON
@@ -24,6 +25,9 @@ public class ClaudeClient {
             Pick the category that best fits, pick a priority based on business impact and
             urgency, and write a short, polite, helpful reply (2-4 sentences) that a support
             agent could send. Do not promise refunds or timelines.
+            When similar resolved tickets are provided, use them as guidance for category,
+            priority and tone, but judge the new ticket on its own merits and never copy a
+            resolution that does not fit.
             """;
 
     // Response shapes. Jackson ignores the JSON fields we don't declare.
@@ -36,7 +40,6 @@ public class ClaudeClient {
     public ClaudeClient(@Value("${anthropic.api-key}") String apiKey,
                         @Value("${anthropic.model}") String model) {
         this.model = model;
-        // Fixed headers sent on every request
         this.http = RestClient.builder()
                 .baseUrl("https://api.anthropic.com")
                 .defaultHeader("x-api-key", apiKey)
@@ -44,8 +47,8 @@ public class ClaudeClient {
                 .build();
     }
 
-    /** Sends the ticket to Claude and returns the category, priority and suggested reply. */
-    public ClassificationResult classify(String subject, String body) {
+    /** Sends the ticket plus similar past cases to Claude and returns category, priority and reply. */
+    public ClassificationResult classify(String subject, String body, List<SimilarCase> similar) {
         // The tool definition: its input_schema is the JSON shape we want back
         Map<String, Object> tool = Map.of(
                 "name", "classify_ticket",
@@ -69,7 +72,7 @@ public class ClaudeClient {
                 "tool_choice", Map.of("type", "tool", "name", "classify_ticket"),
                 "messages", List.of(Map.of(
                         "role", "user",
-                        "content", "Subject: " + subject + "\n\nBody: " + body)));
+                        "content", buildUserMessage(subject, body, similar))));
 
         ClaudeResponse response = http.post()
                 .uri("/v1/messages")
@@ -78,11 +81,28 @@ public class ClaudeClient {
                 .retrieve()
                 .body(ClaudeResponse.class);
 
-        // Find the tool_use block, which holds our JSON result
         return response.content().stream()
                 .filter(block -> "tool_use".equals(block.type()))
                 .map(ContentBlock::input)
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("Claude returned no tool_use block"));
+    }
+
+    /** Builds the user prompt: retrieved examples first, then the new ticket. */
+    private String buildUserMessage(String subject, String body, List<SimilarCase> similar) {
+        StringBuilder sb = new StringBuilder();
+        if (!similar.isEmpty()) {
+            sb.append("Similar tickets resolved in the past:\n");
+            for (int i = 0; i < similar.size(); i++) {
+                SimilarCase c = similar.get(i);
+                sb.append(i + 1).append(". [").append(c.category()).append(" / ").append(c.priority())
+                        .append("] ").append(c.text()).append("\n   Resolution: ")
+                        .append(c.resolution()).append("\n");
+            }
+            sb.append("\n");
+        }
+        sb.append("New ticket to classify:\nSubject: ").append(subject)
+                .append("\n\nBody: ").append(body);
+        return sb.toString();
     }
 }
