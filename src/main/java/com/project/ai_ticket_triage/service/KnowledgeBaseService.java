@@ -28,7 +28,12 @@ public class KnowledgeBaseService {
         String query = (subject + " " + body).trim();
         // Spring AI embeds the query text, then runs a vector search in Postgres
         List<Document> docs = vectorStore.similaritySearch(
-                SearchRequest.builder().query(query).topK(TOP_K).build());
+                SearchRequest.builder()
+                        .query(query)
+                        .topK(TOP_K)
+                        // Only real knowledge-base tickets, never cached AI answers
+                        .filterExpression("source == 'seed'")
+                        .build());
         if (docs == null) {
             return List.of();
         }
