@@ -40,10 +40,11 @@ public class ClassificationService {
     private final Counter misses;
     private final Timer llmLatency;
     private final Timer retrievalLatency;
+    private final ReplyGuard guard;
 
     public ClassificationService(ClassificationCache exactCache, SemanticCache semanticCache,
                                  KnowledgeBaseService knowledgeBase, ClaudeClient claude,
-                                 MeterRegistry registry) {
+                                 MeterRegistry registry, ReplyGuard guard) {
         this.exactCache = exactCache;
         this.semanticCache = semanticCache;
         this.knowledgeBase = knowledgeBase;
@@ -65,6 +66,7 @@ public class ClassificationService {
                 .minimumExpectedValue(Duration.ofMillis(1))
                 .maximumExpectedValue(Duration.ofSeconds(5))
                 .register(registry);
+        this.guard = guard;
     }
 
     public ClassificationResult classify(String subject, String body) {
@@ -111,7 +113,7 @@ public class ClassificationService {
         final List<SimilarCase> examples = similar;
 
         // Timed Claude call. Failures propagate so the consumer can mark the ticket FAILED
-        ClassificationResult result = llmLatency.record(() -> claude.classify(subject, body, examples));
+        ClassificationResult result = guard.enforce(llmLatency.record(() -> claude.classify(subject, body, examples)));
 
         // Store in both tiers (best-effort)
         putExactQuietly(subject, body, result);

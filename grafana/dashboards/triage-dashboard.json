@@ -92,6 +92,36 @@
         { "refId": "A", "legendFormat": "max lag", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "max(kafka_consumer_fetch_manager_records_lag_max)" }
       ]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Rate-limited requests (429)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 21, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "rejected", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(triage_ratelimit_rejected_total[1m]))" }
+      ]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Guardrail blocks by reason (per 5m)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 8, "y": 21, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{reason}}", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum by (reason) (increase(triage_guardrail_blocked_total[5m]))" }
+      ]
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Ticket submissions by HTTP status",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 16, "y": 21, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{status}}", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum by (status) (rate(http_server_requests_seconds_count{method=\"POST\",uri=\"/tickets\"}[1m]))" }
+      ]
     }
   ]
 }

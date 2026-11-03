@@ -13,6 +13,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.project.ai_ticket_triage.dto.CreateTicketRequest;
+import jakarta.validation.Valid;
 
 /**
  * REST API for tickets.
@@ -25,8 +27,6 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/tickets")
 public class TicketController {
 
-    /** Shape of the JSON body expected by POST /tickets. */
-    public record CreateTicketRequest(String subject, String body) {}
 
     private final TicketRepository repo;
     private final TicketProducer producer;
@@ -40,8 +40,7 @@ public class TicketController {
     }
 
     @PostMapping
-    public ResponseEntity<Map<String, Object>> create(@RequestBody CreateTicketRequest req) {
-        // Save first so the ticket has an id before it is published
+    public ResponseEntity<Map<String, Object>> create(@Valid @RequestBody CreateTicketRequest req) {
         Ticket t = new Ticket();
         t.setSubject(req.subject());
         t.setBody(req.body());
